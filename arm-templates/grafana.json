@@ -1,0 +1,449 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "server_name": {
+            "type": "string"
+        },
+        "deployment_name": {
+            "type": "string",
+            "defaultValue": "grafana-deployment"
+        },
+        "grafana_version": {
+            "type": "string",
+            "defaultValue": "7.3.3"
+        },
+        "appservice_plan": {
+            "type": "object",
+            "defaultValue": {
+                "name": "F1",
+                "tier": "Free",
+                "size": "F1",
+                "family": "F",
+                "capacity": 1
+            }
+        },
+        "spn_clientid_grafana_online": {
+            "type": "securestring"
+        },
+        "spn_clientsecret_grafana_online": {
+            "type": "securestring"
+        },
+        "grafana_mysql_password": {
+            "type": "securestring"
+        },
+        "grafana_admin_password": {
+            "type": "securestring"
+        },
+        "current_user_objectId": {
+            "type": "string"
+        }
+    },
+    "variables": {
+        "GRAFANA_SERVER_NAME": "[parameters('server_name')]",
+        "GRAFANA_VERSION": "[parameters('grafana_version')]",
+        "RESOURCE_GROUP": "[concat(variables('GRAFANA_SERVER_NAME'))]",
+        "RESOURCE_GROUP_LOCATION": "eastus",
+        "RESOURCE_NAME_KEYVAULT": "[concat(variables('GRAFANA_SERVER_NAME'),'-kv')]",
+        "RESOURCE_NAME_MYSQL": "[concat(variables('GRAFANA_SERVER_NAME'),'-db')]",
+        "RESOURCE_NAME_SERVERFARM": "[concat(variables('GRAFANA_SERVER_NAME'),'-sf')]",
+        "RESOURCE_NAME_WEBSITE": "[concat(variables('GRAFANA_SERVER_NAME'))]",
+        "GRAFANA_IMAGE": "[concat('DOCKER|grafana/grafana:',variables('GRAFANA_VERSION'))]",
+        "GRAFANA_DATABASE_USER": "grafana-dbadmin",
+        "GF_SECURITY_ADMIN_USER": "grafana-admin",
+        "GF_SECURITY_ADMIN_PASSWORD": "[parameters('grafana_admin_password')]",
+        "GF_DATABASE_USER": "[concat(variables('GRAFANA_DATABASE_USER'),'@',variables('RESOURCE_NAME_MYSQL'))]",
+        "GF_DATABASE_HOST": "[concat(variables('RESOURCE_NAME_MYSQL'),'.mysql.database.azure.com:3306')]",
+        "GF_INSTALL_PLUGINS": "grafana-clock-panel,https://github.com/yesoreyeram/grafana-infinity-datasource/releases/download/v0.6.0-alpha3/yesoreyeram-infinity-datasource-0.6.0.zip;grafana-infinity-datasource,grafana-simple-json-datasource",
+        "grafana_settings": [
+            {
+                "name": "GF_AUTH_DISABLE_LOGIN_FORM",
+                "value": "true"
+            },
+            {
+                "name": "GF_AUTH_OAUTH_AUTO_LOGIN",
+                "value": "true"
+            },
+            {
+                "name": "GF_SERVER_ROOT_URL",
+                "value": "[concat('https://',variables('GRAFANA_SERVER_NAME'),'.azurewebsites.net')]"
+            },
+            {
+                "name": "GF_SECURITY_ADMIN_USER",
+                "value": "[variables('GF_SECURITY_ADMIN_USER')]"
+            },
+            {
+                "name": "GF_SECURITY_ADMIN_PASSWORD",
+                "value": "[variables('GF_SECURITY_ADMIN_PASSWORD')]"
+            },
+            {
+                "name": "GF_AUTH_AZUREAD_ENABLED",
+                "value": "true"
+            },
+            {
+                "name": "GF_AUTH_AZUREAD_CLIENT_ID",
+                "value": "[parameters('spn_clientid_grafana_online')]"
+            },
+            {
+                "name": "GF_AUTH_AZUREAD_CLIENT_SECRET",
+                "value": "[parameters('spn_clientsecret_grafana_online')]"
+            },
+            {
+                "name": "GF_AUTH_AZUREAD_SCOPES",
+                "value": "openid email profile"
+            },
+            {
+                "name": "GF_AUTH_AZUREAD_AUTH_URL",
+                "value": "[concat('https://login.microsoftonline.com/',subscription().tenantId,'/oauth2/v2.0/authorize')]"
+            },
+            {
+                "name": "GF_AUTH_AZUREAD_TOKEN_URL",
+                "value": "[concat('https://login.microsoftonline.com/',subscription().tenantId,'/oauth2/v2.0/token')]"
+            },
+            {
+                "name": "GF_AUTH_AZUREAD_SIGNOUT_REDIRECT_URL",
+                "value": "[concat('https://login.microsoftonline.com/',subscription().tenantId,'/oauth2/logout?post_logout_redirect_uri=https://',variables('RESOURCE_NAME_WEBSITE'),'.azurewebsites.net/logout')]"
+            },
+            {
+                "name": "GF_DATABASE_TYPE",
+                "value": "mysql"
+            },
+            {
+                "name": "GF_DATABASE_HOST",
+                "value": "[variables('GF_DATABASE_HOST')]"
+            },
+            {
+                "name": "GF_DATABASE_USER",
+                "value": "[variables('GF_DATABASE_USER')]"
+            },
+            {
+                "name": "GF_DATABASE_PASSWORD",
+                "value": "[parameters('grafana_mysql_password')]"
+            },
+            {
+                "name": "GF_DATABASE_SSL_MODE",
+                "value": "true"
+            },
+            {
+                "name": "GF_DATABASE_SERVER_CERT_NAME",
+                "value": "*.mysql.database.azure.com"
+            },
+            {
+                "name": "GF_DATABASE_CA_CERT_PATH",
+                "value": "/etc/ssl/certs/ca-cert-Baltimore_CyberTrust_Root.pem"
+            },
+            {
+                "name": "GF_INSTALL_PLUGINS",
+                "value": "[variables('GF_INSTALL_PLUGINS')]"
+            }
+        ]
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Resources/resourceGroups",
+            "apiVersion": "2020-10-01",
+            "name": "[variables('RESOURCE_GROUP')]",
+            "location": "[variables('RESOURCE_GROUP_LOCATION')]"
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-06-01",
+            "resourceGroup": "[variables('RESOURCE_GROUP')]",
+            "dependsOn": [
+                "[variables('RESOURCE_GROUP')]"
+            ],
+            "name": "[parameters('deployment_name')]",
+            "properties": {
+                "mode": "Incremental",
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "resources": [
+                        {
+                            "apiVersion": "2018-02-14",
+                            "name": "[variables('RESOURCE_NAME_KEYVAULT')]",
+                            "location": "[variables('RESOURCE_GROUP_LOCATION')]",
+                            "type": "Microsoft.KeyVault/vaults",
+                            "properties": {
+                                "enabledForDeployment": false,
+                                "enabledForTemplateDeployment": true,
+                                "enabledForDiskEncryption": false,
+                                "enableRbacAuthorization": false,
+                                "accessPolicies": [
+                                    {
+                                        "tenantId": "[subscription().tenantId]",
+                                        "objectId": "[parameters('current_user_objectId')]",
+                                        "permissions": {
+                                            "keys": [],
+                                            "secrets": [
+                                                "List",
+                                                "Get"
+                                            ],
+                                            "certificates": []
+                                        }
+                                    }
+                                ],
+                                "tenantId": "[subscription().tenantId]",
+                                "sku": {
+                                    "name": "Standard",
+                                    "family": "A"
+                                },
+                                "enableSoftDelete": false,
+                                "softDeleteRetentionInDays": 90,
+                                "networkAcls": {
+                                    "defaultAction": "allow",
+                                    "bypass": "AzureServices",
+                                    "ipRules": [],
+                                    "virtualNetworkRules": []
+                                }
+                            },
+                            "resources": [
+                                {
+                                    "type": "secrets",
+                                    "name": "spn-clientid-grafana-online",
+                                    "apiVersion": "2016-10-01",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_KEYVAULT')]"
+                                    ],
+                                    "properties": {
+                                        "value": "[parameters('spn_clientid_grafana_online')]"
+                                    }
+                                },
+                                {
+                                    "type": "secrets",
+                                    "name": "spn-secret-grafana-online",
+                                    "apiVersion": "2016-10-01",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_KEYVAULT')]"
+                                    ],
+                                    "properties": {
+                                        "value": "[parameters('spn_clientsecret_grafana_online')]"
+                                    }
+                                },
+                                {
+                                    "type": "secrets",
+                                    "name": "grafana-password",
+                                    "apiVersion": "2016-10-01",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_KEYVAULT')]"
+                                    ],
+                                    "properties": {
+                                        "value": "[parameters('grafana_admin_password')]"
+                                    }
+                                },
+                                {
+                                    "type": "secrets",
+                                    "name": "grafana-mysql-password",
+                                    "apiVersion": "2016-10-01",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_KEYVAULT')]"
+                                    ],
+                                    "properties": {
+                                        "value": "[parameters('grafana_mysql_password')]"
+                                    }
+                                }
+                            ],
+                            "tags": {},
+                            "dependsOn": []
+                        },
+                        {
+                            "type": "Microsoft.DBforMySQL/servers",
+                            "apiVersion": "2017-12-01",
+                            "name": "[variables('RESOURCE_NAME_MYSQL')]",
+                            "location": "[variables('RESOURCE_GROUP_LOCATION')]",
+                            "sku": {
+                                "name": "B_Gen5_1",
+                                "tier": "Basic",
+                                "family": "Gen5",
+                                "capacity": 1
+                            },
+                            "properties": {
+                                "administratorLogin": "[variables('GRAFANA_DATABASE_USER')]",
+                                "administratorLoginPassword": "[parameters('grafana_mysql_password')]",
+                                "storageProfile": {
+                                    "storageMB": 5120,
+                                    "backupRetentionDays": 7,
+                                    "geoRedundantBackup": "Disabled",
+                                    "storageAutogrow": "Enabled"
+                                },
+                                "version": "5.7",
+                                "sslEnforcement": "Enabled",
+                                "minimalTlsVersion": "TLSEnforcementDisabled",
+                                "infrastructureEncryption": "Disabled",
+                                "publicNetworkAccess": "Enabled"
+                            },
+                            "resources": [
+                                {
+                                    "type": "Microsoft.DBforMySQL/servers/databases",
+                                    "apiVersion": "2017-12-01",
+                                    "name": "[concat( variables('RESOURCE_NAME_MYSQL'), '/grafana')]",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_MYSQL')]"
+                                    ],
+                                    "properties": {
+                                        "charset": "latin1",
+                                        "collation": "latin1_swedish_ci"
+                                    }
+                                },
+                                {
+                                    "type": "Microsoft.DBforMySQL/servers/firewallRules",
+                                    "apiVersion": "2017-12-01",
+                                    "name": "[concat( variables('RESOURCE_NAME_MYSQL') ,'/AllowAllWindowsAzureIps')]",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_MYSQL')]"
+                                    ],
+                                    "properties": {
+                                        "startIpAddress": "0.0.0.0",
+                                        "endIpAddress": "0.0.0.0"
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "type": "Microsoft.Web/serverfarms",
+                            "apiVersion": "2018-02-01",
+                            "name": "[variables('RESOURCE_NAME_SERVERFARM')]",
+                            "location": "[variables('RESOURCE_GROUP_LOCATION')]",
+                            "sku": "[parameters('appservice_plan')]",
+                            "kind": "linux",
+                            "properties": {
+                                "perSiteScaling": false,
+                                "maximumElasticWorkerCount": 1,
+                                "isSpot": false,
+                                "reserved": true,
+                                "isXenon": false,
+                                "hyperV": false,
+                                "targetWorkerCount": 0,
+                                "targetWorkerSizeId": 0
+                            }
+                        },
+                        {
+                            "type": "Microsoft.Web/sites",
+                            "apiVersion": "2018-11-01",
+                            "name": "[variables('RESOURCE_NAME_WEBSITE')]",
+                            "location": "[variables('RESOURCE_GROUP_LOCATION')]",
+                            "dependsOn": [
+                                "[variables('RESOURCE_NAME_MYSQL')]",
+                                "[variables('RESOURCE_NAME_SERVERFARM')]"
+                            ],
+                            "kind": "app,linux,container",
+                            "properties": {
+                                "enabled": true,
+                                "hostNameSslStates": [
+                                    {
+                                        "name": "[concat( variables('RESOURCE_NAME_WEBSITE') ,'.azurewebsites.net')]",
+                                        "sslState": "Disabled",
+                                        "hostType": "Standard"
+                                    },
+                                    {
+                                        "name": "[concat(variables('RESOURCE_NAME_WEBSITE') ,'.scm.azurewebsites.net')]",
+                                        "sslState": "Disabled",
+                                        "hostType": "Repository"
+                                    }
+                                ],
+                                "serverFarmId": "[concat('/subscriptions/',subscription().subscriptionId,'/resourceGroups/',variables('RESOURCE_GROUP'),'/providers/Microsoft.Web/serverFarms/',variables('RESOURCE_NAME_SERVERFARM'))]",
+                                "reserved": true,
+                                "isXenon": false,
+                                "hyperV": false,
+                                "siteConfig": {
+                                    "appSettings": "[variables('grafana_settings')]"
+                                },
+                                "scmSiteAlsoStopped": false,
+                                "clientAffinityEnabled": false,
+                                "clientCertEnabled": false,
+                                "hostNamesDisabled": false,
+                                "containerSize": 0,
+                                "dailyMemoryTimeQuota": 0,
+                                "httpsOnly": false,
+                                "redundancyMode": "None"
+                            },
+                            "resources": [
+                                {
+                                    "type": "Microsoft.Web/sites/config",
+                                    "apiVersion": "2018-11-01",
+                                    "name": "[concat(variables('RESOURCE_NAME_WEBSITE'),'/web')]",
+                                    "location": "[variables('RESOURCE_GROUP_LOCATION')]",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_WEBSITE')]"
+                                    ],
+                                    "properties": {
+                                        "numberOfWorkers": 1,
+                                        "defaultDocuments": [
+                                            "index.html",
+                                            "hostingstart.html"
+                                        ],
+                                        "netFrameworkVersion": "v4.0",
+                                        "linuxFxVersion": "[variables('GRAFANA_IMAGE')]",
+                                        "requestTracingEnabled": false,
+                                        "remoteDebuggingEnabled": false,
+                                        "remoteDebuggingVersion": "VS2019",
+                                        "httpLoggingEnabled": false,
+                                        "logsDirectorySizeLimit": 35,
+                                        "detailedErrorLoggingEnabled": false,
+                                        "publishingUsername": "[concat('$',variables('RESOURCE_NAME_WEBSITE'))]",
+                                        "azureStorageAccounts": null,
+                                        "scmType": "None",
+                                        "use32BitWorkerProcess": true,
+                                        "webSocketsEnabled": false,
+                                        "alwaysOn": false,
+                                        "managedPipelineMode": "Integrated",
+                                        "virtualApplications": [
+                                            {
+                                                "virtualPath": "/",
+                                                "physicalPath": "site\\wwwroot",
+                                                "preloadEnabled": false
+                                            }
+                                        ],
+                                        "loadBalancing": "LeastRequests",
+                                        "experiments": {
+                                            "rampUpRules": []
+                                        },
+                                        "autoHealEnabled": false,
+                                        "localMySqlEnabled": false,
+                                        "ipSecurityRestrictions": [
+                                            {
+                                                "ipAddress": "Any",
+                                                "action": "Allow",
+                                                "priority": 1,
+                                                "name": "Allow all",
+                                                "description": "Allow all access"
+                                            }
+                                        ],
+                                        "scmIpSecurityRestrictions": [
+                                            {
+                                                "ipAddress": "Any",
+                                                "action": "Allow",
+                                                "priority": 1,
+                                                "name": "Allow all",
+                                                "description": "Allow all access"
+                                            }
+                                        ],
+                                        "scmIpSecurityRestrictionsUseMain": false,
+                                        "http20Enabled": false,
+                                        "minTlsVersion": "1.2",
+                                        "ftpsState": "AllAllowed",
+                                        "reservedInstanceCount": 0
+                                    }
+                                },
+                                {
+                                    "type": "Microsoft.Web/sites/hostNameBindings",
+                                    "apiVersion": "2018-11-01",
+                                    "name": "[concat(variables('RESOURCE_NAME_WEBSITE'),'/',variables('RESOURCE_NAME_WEBSITE'),'.azurewebsites.net')]",
+                                    "location": "[variables('RESOURCE_GROUP_LOCATION')]",
+                                    "dependsOn": [
+                                        "[variables('RESOURCE_NAME_WEBSITE')]"
+                                    ],
+                                    "properties": {
+                                        "siteName": "[variables('RESOURCE_NAME_WEBSITE')]",
+                                        "hostNameType": "Verified"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "outputs": {}
+}
